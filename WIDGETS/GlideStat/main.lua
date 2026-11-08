@@ -1,6 +1,6 @@
 -- =====================================================================
---  GlideStat - widget EdgeTX dla szybowcow z napedem (TX16S MK3 i inne
---  radia z kolorowym ekranem)
+--  GlideStat - widget EdgeTX dla szybowcow z napedem (TX16S MK3 800x480
+--  i inne radia z kolorowym ekranem; uklad i czcionki skaluja sie do strefy)
 --
 --  Pokazuje:
 --   * telemetrie na zywo: wysokosc, wario, napiecie odbiornika, jakosc
@@ -220,7 +220,7 @@ end
 -- --- rysowanie --------------------------------------------------------
 local function txt(x, y, s, flags, color)
   lcd.setColor(CUSTOM_COLOR, color)
-  lcd.drawText(x, y, s, (flags or 0) + CUSTOM_COLOR)
+  lcd.drawText(math.floor(x), math.floor(y), s, (flags or 0) + CUSTOM_COLOR)
 end
 
 local function stateInfo(w)
@@ -230,76 +230,135 @@ local function stateInfo(w)
   return "SZYBOWANIE", w.colGlide
 end
 
+-- wysokosc czcionki (lcd.sizeText gdy dostepne, inaczej szacunek)
+local FONT_H = { [SMLSIZE] = 13, [0] = 18, [MIDSIZE] = 26, [DBLSIZE] = 36 }
+local function textH(f)
+  if lcd.sizeText then
+    local _, h = lcd.sizeText("0", f)
+    if h and h > 0 then return h end
+  end
+  return FONT_H[f] or 18
+end
+
+local function textW(s, f)
+  if lcd.sizeText then
+    local w = lcd.sizeText(s, f)
+    if w then return w end
+  end
+  return #s * (FONT_H[f] or 18) * 0.6
+end
+
+-- najwieksza czcionka z listy, w ktorej wszystkie teksty mieszcza sie w maxW / maxH
+local function fitFont(texts, maxW, maxH, fonts)
+  for _, f in ipairs(fonts) do
+    local ok = textH(f) <= maxH
+    if ok then
+      for _, s in ipairs(texts) do
+        if textW(s, f) > maxW then ok = false break end
+      end
+    end
+    if ok then return f end
+  end
+  return fonts[#fonts]
+end
+
+local BIG_FONTS = { DBLSIZE, MIDSIZE, 0, SMLSIZE }
+local SML_FONTS = { MIDSIZE, 0, SMLSIZE }
+
 local function drawFull(w)
   local z = w.zone
   local x0, y0, W, H = z.x, z.y, z.w, z.h
   local fg = w.options.Color
-  local big = W >= 440 and MIDSIZE or 0
+  -- skala wzgledem projektu 480x272 (800x480 -> ok. 1.67)
+  local s = math.min(W / 480, H / 272)
+  local function S(v) return math.floor(v * s + 0.5) end
+  local pad = S(4)
 
-  -- pasek stanu
+  -- ---- pasek stanu ----
+  local barH = S(34)
   local label, col = stateInfo(w)
+  local bw = S(130)
   lcd.setColor(CUSTOM_COLOR, col)
-  lcd.drawFilledRectangle(x0 + 2, y0 + 2, 128, 30, CUSTOM_COLOR)
-  txt(x0 + 66, y0 + 7, label, CENTER, w.colBlack)
+  lcd.drawFilledRectangle(x0 + 2, y0 + 2, bw, barH - 4, CUSTOM_COLOR)
+  local fb = fitFont({ "BRAK TELEM.", "SZYBOWANIE" }, bw - 6, barH - 6, SML_FONTS)
+  txt(x0 + 2 + bw / 2, y0 + 2 + (barH - 4 - textH(fb)) / 2, label, fb + CENTER, w.colBlack)
 
-  txt(x0 + 140, y0 + 1,
-      w.alt and fmtAlt(w.alt) or "--- m", MIDSIZE, fg)
+  local altS = w.alt and fmtAlt(w.alt) or "--- m"
   local vs = w.vspd
-  txt(x0 + 140 + W * 0.22, y0 + 1,
-      vs and string.format("%+.1f m/s", vs) or "--- m/s", MIDSIZE,
+  local vsS = vs and string.format("%+.1f m/s", vs) or "--- m/s"
+  local xAlt = x0 + bw + S(12)
+  local slot = math.floor(W * 0.24)
+  local ft = fitFont({ "8888 m", "+88.8 m/s" }, slot - S(8), barH, BIG_FONTS)
+  local yt = y0 + (barH - textH(ft)) / 2
+  txt(xAlt, yt, altS, ft, fg)
+  txt(xAlt + slot, yt, vsS, ft,
       (vs and vs > 0.2) and w.colGlide or ((vs and vs < -0.2) and w.colMotor or fg))
 
   local rx = getVal(w, "rxbt")
   local lq = getVal(w, "lq")
   local sat = getVal(w, "sats")
-  txt(x0 + W - 4, y0 + 1,
-      "RxBt " .. (rx and w.link and string.format("%.1fV", rx) or "--"),
-      SMLSIZE + RIGHT, fg)
-  txt(x0 + W - 4, y0 + 17,
-      (w.names.lq or "LQ") .. " " .. (lq and w.link and tostring(lq) or "--")
-      .. "  Sat " .. (sat and w.link and tostring(sat) or "--"),
-      SMLSIZE + RIGHT, fg)
+  local info1 = "RxBt " .. (rx and w.link and string.format("%.1fV", rx) or "--")
+  local info2 = (w.names.lq or "LQ") .. " " .. (lq and w.link and tostring(lq) or "--")
+                .. "  Sat " .. (sat and w.link and tostring(sat) or "--")
+  local infoW = x0 + W - (xAlt + 2 * slot) - pad
+  local fi = fitFont({ info1, info2 }, infoW, barH / 2, SML_FONTS)
+  local ih = textH(fi)
+  txt(x0 + W - pad, y0 + barH / 2 - ih, info1, fi + RIGHT, fg)
+  txt(x0 + W - pad, y0 + barH / 2, info2, fi + RIGHT, fg)
 
-  -- tabela
-  local ty = y0 + 40
+  -- ---- tabela ----
   local c1 = x0 + math.floor(W * 0.47)
   local c2 = x0 + math.floor(W * 0.74)
-  local c3 = x0 + W - 6
-  txt(c1, ty, "Silnik", SMLSIZE + RIGHT, w.colMotor)
-  txt(c2, ty, "Bez silnika", SMLSIZE + RIGHT, w.colGlide)
-  txt(c3, ty, "Razem", SMLSIZE + RIGHT, w.colDim)
+  local c3 = x0 + W - pad - 2
+  local colW = math.floor(W * 0.26) - S(10)
 
-  local footerH = 22
-  local rowTop = ty + 18
-  local rowH = math.min(42, math.floor((H - (rowTop - y0) - footerH) / 3))
-  local font = (big ~= 0 and rowH >= 28) and MIDSIZE or 0
-  local labelDy = font == MIDSIZE and 6 or 0
+  local fh = fitFont({ "Bez silnika" }, colW, S(20), SML_FONTS)
+  local ty = y0 + barH + S(6)
+  txt(c1, ty, "Silnik", fh + RIGHT, w.colMotor)
+  txt(c2, ty, "Bez silnika", fh + RIGHT, w.colGlide)
+  txt(c3, ty, "Razem", fh + RIGHT, w.colDim)
+
+  local footerTxt = "Max wys.: " .. (w.maxAlt and fmtAlt(w.maxAlt) or "--")
+      .. "    Max wznosz.: " .. string.format("%.1f m/s", w.maxVspd)
+  local ff = fitFont({ footerTxt }, W * 0.68, S(22), SML_FONTS)
+  local footerH = textH(ff) + S(8)
+
+  local rowTop = ty + textH(fh) + S(6)
+  local rowH = math.floor((y0 + H - footerH - rowTop) / 3)
 
   local rows = {
     { "Czas lotu", fmtTime(w.tMotor), fmtTime(w.tGlide), fmtTime(w.tMotor + w.tGlide) },
     { "Dystans",   fmtDist(w.dMotor), fmtDist(w.dGlide), fmtDist(w.dMotor + w.dGlide) },
     { "Wznios",    fmtAlt(w.gMotor),  fmtAlt(w.gGlide),  fmtAlt(w.gMotor + w.gGlide) },
   }
+  local vals = { "8:88:88", "888.88 km", "8888 m" }   -- rezerwa na najszersze wartosci
+  for _, r in ipairs(rows) do
+    for j = 2, 4 do vals[#vals + 1] = r[j] end
+  end
+  local fv = fitFont(vals, colW, rowH - S(6), BIG_FONTS)
+  local fl = fitFont({ "Czas lotu", "Dystans", "Wznios" },
+                     c1 - colW - x0 - pad, rowH - S(6), SML_FONTS)
+
   for i, r in ipairs(rows) do
     local y = rowTop + (i - 1) * rowH
     lcd.setColor(CUSTOM_COLOR, w.colLine)
-    lcd.drawLine(x0 + 2, y - 1, x0 + W - 2, y - 1, SOLID, CUSTOM_COLOR)
-    txt(x0 + 4, y + labelDy, r[1], 0, w.colDim)
-    txt(c1, y, r[2], font + RIGHT, fg)
-    txt(c2, y, r[3], font + RIGHT, w.colGlide)
-    txt(c3, y, r[4], font + RIGHT, fg)
+    lcd.drawLine(x0 + 2, y, x0 + W - 2, y, SOLID, CUSTOM_COLOR)
+    local yv = y + (rowH - textH(fv)) / 2
+    txt(x0 + pad, y + (rowH - textH(fl)) / 2, r[1], fl, w.colDim)
+    txt(c1, yv, r[2], fv + RIGHT, fg)
+    txt(c2, yv, r[3], fv + RIGHT, w.colGlide)
+    txt(c3, yv, r[4], fv + RIGHT, fg)
   end
 
-  -- stopka
-  local fy = y0 + H - footerH + 2
-  txt(x0 + 4, fy,
-      "Max wys.: " .. (w.maxAlt and fmtAlt(w.maxAlt) or "--")
-      .. "    Max wznosz.: " .. string.format("%.1f m/s", w.maxVspd),
-      SMLSIZE, fg)
+  -- ---- stopka ----
+  local fy = y0 + H - footerH + S(4)
+  lcd.setColor(CUSTOM_COLOR, w.colLine)
+  lcd.drawLine(x0 + 2, fy - S(3), x0 + W - 2, fy - S(3), SOLID, CUSTOM_COLOR)
+  txt(x0 + pad, fy, footerTxt, ff, fg)
   if not w.options.MotorSrc or w.options.MotorSrc == 0 then
-    txt(x0 + W - 4, fy, "Ustaw MotorSrc!", SMLSIZE + RIGHT, w.colWarn)
+    txt(x0 + W - pad, fy, "Ustaw MotorSrc!", ff + RIGHT, w.colWarn)
   elseif not w.flying then
-    txt(x0 + W - 4, fy, "czeka na start", SMLSIZE + RIGHT, w.colDim)
+    txt(x0 + W - pad, fy, "czeka na start", ff + RIGHT, w.colDim)
   end
 end
 
@@ -307,8 +366,6 @@ local function drawCompact(w)
   local z = w.zone
   local x0, y0, W, H = z.x, z.y, z.w, z.h
   local fg = w.options.Color
-  local font = H < 90 and SMLSIZE or 0
-  local lh = H < 90 and 15 or 21
 
   local label, col = stateInfo(w)
   local lines = {
@@ -318,9 +375,14 @@ local function drawCompact(w)
     { "Silnik: " .. fmtTime(w.tMotor) .. "  " .. fmtDist(w.dMotor), fg },
     { "Lot: " .. fmtTime(w.tMotor + w.tGlide), fg },
   }
+  -- dobierz czcionke tak, by zmiescily sie co najmniej 4 linie
+  local texts = {}
+  for i = 1, 4 do texts[i] = lines[i][1] end
+  local f = fitFont(texts, W - 4, H / 4 - 2, BIG_FONTS)
+  local lh = textH(f) + 2
   local n = math.max(1, math.floor(H / lh))
   for i = 1, math.min(n, #lines) do
-    txt(x0 + 2, y0 + (i - 1) * lh, lines[i][1], font, lines[i][2])
+    txt(x0 + 2, y0 + (i - 1) * lh, lines[i][1], f, lines[i][2])
   end
 end
 

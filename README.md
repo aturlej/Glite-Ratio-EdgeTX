@@ -1,7 +1,7 @@
 # Glite-Ratio-EdgeTX
 
-Widget Lua **GlideStat** dla EdgeTX (radia z kolorowym ekranem, np. RadioMaster TX16S MK3)
-dla szybowców z napędem.
+Widget Lua **GlideStat** dla EdgeTX (radia z kolorowym ekranem, projektowany pod RadioMaster
+TX16S MK3 – 5" 800×480) dla szybowców z napędem.
 
 ## Funkcje
 
@@ -10,7 +10,8 @@ dla szybowców z napędem.
 - Dystans (GPS, awaryjnie z prędkości GSpd): z silnikiem / bez silnika / razem
 - Zdobyta wysokość (suma wznoszeń) z silnikiem i bez silnika (termika)
 - Max wysokość i najlepsze wznoszenie podczas szybowania
-- Układ pełny dla dużych stref i kompaktowy dla małych
+- Układ pełny dla dużych stref i kompaktowy dla małych; położenie elementów skaluje się do
+  rozmiaru strefy, a czcionki są dobierane automatycznie (największa, która się mieści)
 
 ## Instalacja
 
